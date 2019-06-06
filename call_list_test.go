@@ -9,7 +9,7 @@ import (
 	"github.com/securego/gosec/testutils"
 )
 
-var _ = Describe("call list", func() {
+var _ = Describe("Call List", func() {
 	var (
 		calls gosec.CallList
 	)
@@ -61,7 +61,7 @@ var _ = Describe("call list", func() {
 		// Create file to be scanned
 		pkg := testutils.NewTestPackage()
 		defer pkg.Close()
-		pkg.AddFile("md5.go", testutils.SampleCodeG401[0].Code)
+		pkg.AddFile("md5.go", testutils.SampleCodeG401[0].Code[0])
 
 		ctx := pkg.CreateContext("md5.go")
 
@@ -73,7 +73,7 @@ var _ = Describe("call list", func() {
 		v := testutils.NewMockVisitor()
 		v.Context = ctx
 		v.Callback = func(n ast.Node, ctx *gosec.Context) bool {
-			if _, ok := n.(*ast.CallExpr); ok && calls.ContainsCallExpr(n, ctx) != nil {
+			if _, ok := n.(*ast.CallExpr); ok && calls.ContainsCallExpr(n, ctx, false) != nil {
 				matched++
 			}
 			return true

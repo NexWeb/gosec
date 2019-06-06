@@ -65,6 +65,7 @@ func Generate(filters ...RuleFilter) RuleList {
 		{"G104", "Audit errors not checked", NewNoErrorCheck},
 		{"G105", "Audit the use of big.Exp function", NewUsingBigExp},
 		{"G106", "Audit the use of ssh.InsecureIgnoreHostKey function", NewSSHHostKey},
+		{"G107", "Url provided to HTTP request as taint input", NewSSRFCheck},
 
 		// injection
 		{"G201", "SQL query construction using format string", NewSQLStrFormat},
@@ -74,13 +75,13 @@ func Generate(filters ...RuleFilter) RuleList {
 
 		// filesystem
 		{"G301", "Poor file permissions used when creating a directory", NewMkdirPerms},
-		{"G302", "Poor file permisions used when creation file or using chmod", NewFilePerms},
+		{"G302", "Poor file permissions used when creation file or using chmod", NewFilePerms},
 		{"G303", "Creating tempfile using a predictable path", NewBadTempFile},
 		{"G304", "File path provided as taint input", NewReadFile},
 		{"G305", "File path traversal when extracting zip archive", NewArchive},
 
 		// crypto
-		{"G401", "Detect the usage of DES, RC4, or MD5", NewUsesWeakCryptography},
+		{"G401", "Detect the usage of DES, RC4, MD5 or SHA1", NewUsesWeakCryptography},
 		{"G402", "Look for bad TLS connection settings", NewIntermediateTLSCheck},
 		{"G403", "Ensure minimum RSA key length of 2048 bits", NewWeakKeyStrength},
 		{"G404", "Insecure random number source (rand)", NewWeakRandCheck},
@@ -90,6 +91,7 @@ func Generate(filters ...RuleFilter) RuleList {
 		{"G502", "Import blacklist: crypto/des", NewBlacklistedImportDES},
 		{"G503", "Import blacklist: crypto/rc4", NewBlacklistedImportRC4},
 		{"G504", "Import blacklist: net/http/cgi", NewBlacklistedImportCGI},
+		{"G505", "Import blacklist: crypto/sha1", NewBlacklistedImportSHA1},
 	}
 
 	ruleMap := make(map[string]RuleDefinition)

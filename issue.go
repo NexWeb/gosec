@@ -34,7 +34,7 @@ const (
 	High
 )
 
-// Issue is returnd by a gosec rule if it discovers an issue with the scanned code.
+// Issue is returned by a gosec rule if it discovers an issue with the scanned code.
 type Issue struct {
 	Severity   Score  `json:"severity"`   // issue severity (how problematic it is)
 	Confidence Score  `json:"confidence"` // issue confidence (how sure we are we found it)
@@ -46,7 +46,7 @@ type Issue struct {
 }
 
 // MetaData is embedded in all gosec rules. The Severity, Confidence and What message
-// will be passed tbhrough to reported issues.
+// will be passed through to reported issues.
 type MetaData struct {
 	ID         string
 	Severity   Score
@@ -77,8 +77,11 @@ func codeSnippet(file *os.File, start int64, end int64, n ast.Node) (string, err
 		return "", fmt.Errorf("Invalid AST node provided")
 	}
 
-	size := (int)(end - start) // Go bug, os.File.Read should return int64 ...
-	file.Seek(start, 0)        // #nosec
+	size := (int)(end - start)    // Go bug, os.File.Read should return int64 ...
+	_, err := file.Seek(start, 0) // #nosec
+	if err != nil {
+		return "", fmt.Errorf("move to the beginning of file: %v", err)
+	}
 
 	buf := make([]byte, size)
 	if nread, err := file.Read(buf); err != nil || nread != size {

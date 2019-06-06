@@ -3,7 +3,6 @@ package testutils
 import (
 	"fmt"
 	"go/build"
-	"go/parser"
 	"io/ioutil"
 	"log"
 	"os"
@@ -11,13 +10,13 @@ import (
 	"strings"
 
 	"github.com/securego/gosec"
-	"golang.org/x/tools/go/loader"
+	"golang.org/x/tools/go/packages"
 )
 
 type buildObj struct {
-	pkg     *build.Package
-	config  loader.Config
-	program *loader.Program
+	pkg    *build.Package
+	config *packages.Config
+	pkgs   []*packages.Package
 }
 
 // TestPackage is a mock package for testing purposes
@@ -29,11 +28,9 @@ type TestPackage struct {
 }
 
 // NewTestPackage will create a new and empty package. Must call Close() to cleanup
-// auxilary files
+// auxiliary files
 func NewTestPackage() *TestPackage {
-	// Files must exist in $GOPATH
-	sourceDir := path.Join(os.Getenv("GOPATH"), "src")
-	workingDir, err := ioutil.TempDir(sourceDir, "gosecs_test")
+	workingDir, err := ioutil.TempDir("", "gosecs_test")
 	if err != nil {
 		return nil
 	}
@@ -78,20 +75,22 @@ func (p *TestPackage) Build() error {
 	}
 
 	var packageFiles []string
-	packageConfig := loader.Config{Build: &build.Default, ParserMode: parser.ParseComments}
 	for _, filename := range basePackage.GoFiles {
 		packageFiles = append(packageFiles, path.Join(p.Path, filename))
 	}
 
-	packageConfig.CreateFromFilenames(basePackage.Name, packageFiles...)
-	program, err := packageConfig.Load()
+	conf := &packages.Config{
+		Mode:  packages.LoadSyntax,
+		Tests: false,
+	}
+	pkgs, err := packages.Load(conf, packageFiles...)
 	if err != nil {
 		return err
 	}
 	p.build = &buildObj{
-		pkg:     basePackage,
-		config:  packageConfig,
-		program: program,
+		pkg:    basePackage,
+		config: conf,
+		pkgs:   pkgs,
 	}
 	return nil
 }
@@ -103,18 +102,18 @@ func (p *TestPackage) CreateContext(filename string) *gosec.Context {
 		return nil
 	}
 
-	for _, pkg := range p.build.program.Created {
-		for _, file := range pkg.Files {
-			pkgFile := p.build.program.Fset.File(file.Pos()).Name()
+	for _, pkg := range p.build.pkgs {
+		for _, file := range pkg.Syntax {
+			pkgFile := pkg.Fset.File(file.Pos()).Name()
 			strip := fmt.Sprintf("%s%c", p.Path, os.PathSeparator)
 			pkgFile = strings.TrimPrefix(pkgFile, strip)
 			if pkgFile == filename {
 				ctx := &gosec.Context{
-					FileSet: p.build.program.Fset,
+					FileSet: pkg.Fset,
 					Root:    file,
 					Config:  gosec.NewConfig(),
-					Info:    &pkg.Info,
-					Pkg:     pkg.Pkg,
+					Info:    pkg.TypesInfo,
+					Pkg:     pkg.Types,
 					Imports: gosec.NewImportTracker(),
 				}
 				ctx.Imports.TrackPackages(ctx.Pkg.Imports()...)
@@ -133,4 +132,12 @@ func (p *TestPackage) Close() {
 			log.Fatal(err)
 		}
 	}
+}
+
+// Pkgs returns the current built packages
+func (p *TestPackage) Pkgs() []*packages.Package {
+	if p.build != nil {
+		return p.build.pkgs
+	}
+	return []*packages.Package{}
 }

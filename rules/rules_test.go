@@ -6,10 +6,16 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
 	"github.com/securego/gosec"
 	"github.com/securego/gosec/rules"
 	"github.com/securego/gosec/testutils"
 )
+
+type option struct {
+	name  gosec.GlobalOption
+	value string
+}
 
 var _ = Describe("gosec rules", func() {
 
@@ -17,26 +23,32 @@ var _ = Describe("gosec rules", func() {
 		logger    *log.Logger
 		config    gosec.Config
 		analyzer  *gosec.Analyzer
-		runner    func(string, []testutils.CodeSample)
+		runner    func(string, []testutils.CodeSample, ...option)
 		buildTags []string
+		tests     bool
 	)
 
 	BeforeEach(func() {
 		logger, _ = testutils.NewLogger()
 		config = gosec.NewConfig()
-		analyzer = gosec.NewAnalyzer(config, logger)
-		runner = func(rule string, samples []testutils.CodeSample) {
+		analyzer = gosec.NewAnalyzer(config, tests, logger)
+		runner = func(rule string, samples []testutils.CodeSample, options ...option) {
+			for _, o := range options {
+				config.SetGlobal(o.name, o.value)
+			}
 			analyzer.LoadRules(rules.Generate(rules.NewRuleFilter(false, rule)).Builders())
 			for n, sample := range samples {
 				analyzer.Reset()
 				pkg := testutils.NewTestPackage()
 				defer pkg.Close()
-				pkg.AddFile(fmt.Sprintf("sample_%d.go", n), sample.Code)
+				for i, code := range sample.Code {
+					pkg.AddFile(fmt.Sprintf("sample_%d_%d.go", n, i), code)
+				}
 				err := pkg.Build()
 				Expect(err).ShouldNot(HaveOccurred())
 				err = analyzer.Process(buildTags, pkg.Path)
 				Expect(err).ShouldNot(HaveOccurred())
-				issues, _ := analyzer.Report()
+				issues, _, _ := analyzer.Report()
 				if len(issues) != sample.Errors {
 					fmt.Println(sample.Code)
 				}
@@ -58,8 +70,12 @@ var _ = Describe("gosec rules", func() {
 			runner("G103", testutils.SampleCodeG103)
 		})
 
-		It("should errors not being checked", func() {
+		It("should detect errors not being checked", func() {
 			runner("G104", testutils.SampleCodeG104)
+		})
+
+		It("should detect errors not being checked in audit mode", func() {
+			runner("G104", testutils.SampleCodeG104Audit, option{name: gosec.Audit, value: "enabled"})
 		})
 
 		It("should detect of big.Exp function", func() {
@@ -68,6 +84,10 @@ var _ = Describe("gosec rules", func() {
 
 		It("should detect of ssh.InsecureIgnoreHostKey function", func() {
 			runner("G106", testutils.SampleCodeG106)
+		})
+
+		It("should detect ssrf via http requests with variable url", func() {
+			runner("G107", testutils.SampleCodeG107)
 		})
 
 		It("should detect sql injection via format strings", func() {
@@ -110,6 +130,10 @@ var _ = Describe("gosec rules", func() {
 			runner("G401", testutils.SampleCodeG401)
 		})
 
+		It("should detect weak crypto algorithms", func() {
+			runner("G401", testutils.SampleCodeG401b)
+		})
+
 		It("should find insecure tls settings", func() {
 			runner("G402", testutils.SampleCodeG402)
 		})
@@ -136,6 +160,9 @@ var _ = Describe("gosec rules", func() {
 
 		It("should detect blacklisted imports - CGI (httpoxy)", func() {
 			runner("G504", testutils.SampleCodeG504)
+		})
+		It("should detect blacklisted imports - SHA1", func() {
+			runner("G505", testutils.SampleCodeG505)
 		})
 
 	})

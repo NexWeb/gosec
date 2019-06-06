@@ -20,13 +20,15 @@ import (
 	"encoding/xml"
 	htmlTemplate "html/template"
 	"io"
+	"strconv"
+	"strings"
 	plainTemplate "text/template"
 
 	"github.com/securego/gosec"
 	"gopkg.in/yaml.v2"
 )
 
-// ReportFormat enumrates the output format for reported issues
+// ReportFormat enumerates the output format for reported issues
 type ReportFormat int
 
 const (
@@ -41,9 +43,18 @@ const (
 
 	// ReportJUnitXML set the output format to junit xml
 	ReportJUnitXML // JUnit XML format
+
+	//SonarqubeEffortMinutes effort to fix in minutes
+	SonarqubeEffortMinutes = 5
 )
 
 var text = `Results:
+{{range $filePath,$fileErrors := .Errors}}
+Golang errors in file: [{{ $filePath }}]:
+{{range $index, $error := $fileErrors}}
+  > [line {{$error.Line}} : column {{$error.Column}}] - {{$error.Err}}
+{{end}}
+{{end}}
 {{ range $index, $issue := .Issues }}
 [{{ $issue.File }}:{{ $issue.Line }}] - {{ $issue.RuleID }}: {{ $issue.What }} (Confidence: {{ $issue.Confidence}}, Severity: {{ $issue.Severity }})
   > {{ $issue.Code }}
@@ -58,14 +69,16 @@ Summary:
 `
 
 type reportInfo struct {
+	Errors map[string][]gosec.Error `json:"Golang errors"`
 	Issues []*gosec.Issue
 	Stats  *gosec.Metrics
 }
 
 // CreateReport generates a report based for the supplied issues and metrics given
 // the specified format. The formats currently accepted are: json, csv, html and text.
-func CreateReport(w io.Writer, format string, issues []*gosec.Issue, metrics *gosec.Metrics) error {
+func CreateReport(w io.Writer, format, rootPath string, issues []*gosec.Issue, metrics *gosec.Metrics, errors map[string][]gosec.Error) error {
 	data := &reportInfo{
+		Errors: errors,
 		Issues: issues,
 		Stats:  metrics,
 	}
@@ -83,22 +96,59 @@ func CreateReport(w io.Writer, format string, issues []*gosec.Issue, metrics *go
 		err = reportFromHTMLTemplate(w, html, data)
 	case "text":
 		err = reportFromPlaintextTemplate(w, text, data)
+	case "sonarqube":
+		err = reportSonarqube(rootPath, w, data)
 	default:
 		err = reportFromPlaintextTemplate(w, text, data)
 	}
 	return err
 }
 
+func reportSonarqube(rootPath string, w io.Writer, data *reportInfo) error {
+	var si sonarIssues
+	for _, issue := range data.Issues {
+		lines := strings.Split(issue.Line, "-")
+
+		startLine, err := strconv.Atoi(lines[0])
+		if err != nil {
+			return err
+		}
+		endLine := startLine
+		if len(lines) > 1 {
+			endLine, err = strconv.Atoi(lines[1])
+			if err != nil {
+				return err
+			}
+		}
+		s := sonarIssue{
+			EngineID: "gosec",
+			RuleID:   issue.RuleID,
+			PrimaryLocation: location{
+				Message:   issue.What,
+				FilePath:  strings.Replace(issue.File, rootPath+"/", "", 1),
+				TextRange: textRange{StartLine: startLine, EndLine: endLine},
+			},
+			Type:          "VULNERABILITY",
+			Severity:      getSonarSeverity(issue.Severity.String()),
+			EffortMinutes: SonarqubeEffortMinutes,
+		}
+		si.SonarIssues = append(si.SonarIssues, s)
+	}
+	raw, err := json.MarshalIndent(si, "", "\t")
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(raw)
+	return err
+}
+
 func reportJSON(w io.Writer, data *reportInfo) error {
 	raw, err := json.MarshalIndent(data, "", "\t")
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	_, err = w.Write(raw)
-	if err != nil {
-		panic(err)
-	}
 	return err
 }
 

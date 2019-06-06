@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -165,8 +166,54 @@ func GetCallInfo(n ast.Node, ctx *Context) (string, string, error) {
 	return "", "", fmt.Errorf("unable to determine call info")
 }
 
+// GetCallStringArgsValues returns the values of strings arguments if they can be resolved
+func GetCallStringArgsValues(n ast.Node, ctx *Context) []string {
+	values := []string{}
+	switch node := n.(type) {
+	case *ast.CallExpr:
+		for _, arg := range node.Args {
+			switch param := arg.(type) {
+			case *ast.BasicLit:
+				value, err := GetString(param)
+				if err == nil {
+					values = append(values, value)
+				}
+			case *ast.Ident:
+				values = append(values, GetIdentStringValues(param)...)
+			}
+		}
+	}
+	return values
+}
+
+// GetIdentStringValues return the string values of an Ident if they can be resolved
+func GetIdentStringValues(ident *ast.Ident) []string {
+	values := []string{}
+	obj := ident.Obj
+	if obj != nil {
+		switch decl := obj.Decl.(type) {
+		case *ast.ValueSpec:
+			for _, v := range decl.Values {
+				value, err := GetString(v)
+				if err == nil {
+					values = append(values, value)
+				}
+			}
+		case *ast.AssignStmt:
+			for _, v := range decl.Rhs {
+				value, err := GetString(v)
+				if err == nil {
+					values = append(values, value)
+				}
+			}
+		}
+
+	}
+	return values
+}
+
 // GetImportedName returns the name used for the package within the
-// code. It will resolve aliases and ignores initalization only imports.
+// code. It will resolve aliases and ignores initialization only imports.
 func GetImportedName(path string, ctx *Context) (string, bool) {
 	importName, imported := ctx.Imports.Imported[path]
 	if !imported {
@@ -183,7 +230,7 @@ func GetImportedName(path string, ctx *Context) (string, bool) {
 	return importName, true
 }
 
-// GetImportPath resolves the full import path of an identifer based on
+// GetImportPath resolves the full import path of an identifier based on
 // the imports in the current context.
 func GetImportPath(name string, ctx *Context) (string, bool) {
 	for path := range ctx.Imports.Imported {
@@ -255,4 +302,88 @@ func GetPkgAbsPath(pkgPath string) (string, error) {
 		return "", errors.New("no project absolute path found")
 	}
 	return absPath, nil
+}
+
+// ConcatString recursively concatenates strings from a binary expression
+func ConcatString(n *ast.BinaryExpr) (string, bool) {
+	var s string
+	// sub expressions are found in X object, Y object is always last BasicLit
+	if rightOperand, ok := n.Y.(*ast.BasicLit); ok {
+		if str, err := GetString(rightOperand); err == nil {
+			s = str + s
+		}
+	} else {
+		return "", false
+	}
+	if leftOperand, ok := n.X.(*ast.BinaryExpr); ok {
+		if recursion, ok := ConcatString(leftOperand); ok {
+			s = recursion + s
+		}
+	} else if leftOperand, ok := n.X.(*ast.BasicLit); ok {
+		if str, err := GetString(leftOperand); err == nil {
+			s = str + s
+		}
+	} else {
+		return "", false
+	}
+	return s, true
+}
+
+// FindVarIdentities returns array of all variable identities in a given binary expression
+func FindVarIdentities(n *ast.BinaryExpr, c *Context) ([]*ast.Ident, bool) {
+	identities := []*ast.Ident{}
+	// sub expressions are found in X object, Y object is always the last term
+	if rightOperand, ok := n.Y.(*ast.Ident); ok {
+		obj := c.Info.ObjectOf(rightOperand)
+		if _, ok := obj.(*types.Var); ok && !TryResolve(rightOperand, c) {
+			identities = append(identities, rightOperand)
+		}
+	}
+	if leftOperand, ok := n.X.(*ast.BinaryExpr); ok {
+		if leftIdentities, ok := FindVarIdentities(leftOperand, c); ok {
+			identities = append(identities, leftIdentities...)
+		}
+	} else {
+		if leftOperand, ok := n.X.(*ast.Ident); ok {
+			obj := c.Info.ObjectOf(leftOperand)
+			if _, ok := obj.(*types.Var); ok && !TryResolve(leftOperand, c) {
+				identities = append(identities, leftOperand)
+			}
+		}
+	}
+
+	if len(identities) > 0 {
+		return identities, true
+	}
+	// if nil or error, return false
+	return nil, false
+}
+
+// PackagePaths returns a slice with all packages path at given root directory
+func PackagePaths(root string, exclude *regexp.Regexp) ([]string, error) {
+	if strings.HasSuffix(root, "...") {
+		root = root[0 : len(root)-3]
+	} else {
+		return []string{root}, nil
+	}
+	paths := map[string]bool{}
+	err := filepath.Walk(root, func(path string, f os.FileInfo, err error) error {
+		if filepath.Ext(path) == ".go" {
+			path = filepath.Dir(path)
+			if exclude != nil && exclude.MatchString(path) {
+				return nil
+			}
+			paths[path] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return []string{}, err
+	}
+
+	result := []string{}
+	for path := range paths {
+		result = append(result, path)
+	}
+	return result, nil
 }
